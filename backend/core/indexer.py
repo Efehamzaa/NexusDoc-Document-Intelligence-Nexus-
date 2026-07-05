@@ -15,7 +15,7 @@ def build_index(pdf_path):
 
     raw_text = extract_text_from_pdf(pdf_path)
     nodes= get_text_chunks(raw_text)
-    storage= get_storage_context()
+    storage= get_storage_context(reset=True)
 
     index=VectorStoreIndex(nodes=nodes, storage_context=storage)
     return index
