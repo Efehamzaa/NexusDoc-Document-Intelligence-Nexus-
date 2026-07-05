@@ -1,6 +1,9 @@
 import os
 import sys
 import shutil
+import json
+
+from backend.core.query_engine import get_query_engine, get_quiz_engine
 from fastapi import FastAPI , HTTPException, UploadFile, File
 from pydantic import BaseModel
 
@@ -55,7 +58,7 @@ async def upload_file(file: UploadFile = File(...)):
 async def ask_question(istek: SoruIstegi):
     try:
         # Gelen soruyu ChromaDB + Llama 3 motoruna at
-        cevap = engine.query(istek.soru)
+        cevap = engine.chat(istek.soru)
         
         # Sonucu JSON formatında geri fırlat
         return {
@@ -64,3 +67,31 @@ async def ask_question(istek: SoruIstegi):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Sorgu işlenirken kritik hata: {str(e)}")
+    
+
+@app.get("/generate_quiz")
+def generate_quiz():
+    try:
+        engine , prompt = get_quiz_engine()
+
+        ham_cevap = engine.query(prompt)
+        cevap_metni= str(ham_cevap).strip()
+
+        if cevap_metni.startswith("```json"):
+            cevap_metni = cevap_metni[7:]
+        if cevap_metni.endswith("```"):
+            cevap_metni = cevap_metni[:-3]
+        
+        cevap_metni = cevap_metni.strip()
+
+        quiz_verisi=json.loads(cevap_metni)
+
+        return {
+            "durum": "başarılı",
+            "quiz_verisi": quiz_verisi
+        }
+    except json.JSONDecodeError as e:
+        return {"durum": "hata", "mesaj": "Motor JSON formatına uymadı. Halüsinasyon engellendi.", "detay": str(e)}
+    except Exception as e:
+        return {"durum": "hata", "mesaj": "Quiz oluşturulurken kritik hata oluştu.", "detay": str(e)}
+    

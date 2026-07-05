@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -20,29 +21,52 @@ def get_query_engine():
         storage_context=storage
     )
 
-    qa_prompt_tmpl_str=(
-        "Sen NexusDoc sisteminin çekirdeğinde çalışan, son derece net, profesyonel ve analitik bir doküman analiz uzmanısın.\n"
-        "Aşağıda sana kullanıcının yüklediği belgelerden çekilen 'Bağlam Bilgisi (Context)' verilmiştir:\n"
-        "---------------------\n"
-        "{context_str}\n"
-        "---------------------\n"
-        "Görevlerin ve Katı Kuralların:\n"
-        "1. Kullanıcının sorusuna sadece ve sadece yukarıdaki bağlam bilgisini kullanarak Türkçe yanıt ver.\n"
-        "2. Eğer sorunun cevabı bağlam bilgisinde kesin olarak yoksa, asla kendi ön bilginle varsayım yapma veya bilgi uydurma. Sadece 'Bu bilgi yüklenen dokümanlarda bulunmamaktadır.' diyerek işlemi sonlandır.\n"
-        "3. Cevabını verirken net, okunabilir ve profesyonel bir dil kullan. Gerekiyorsa alt başlıklar veya maddelerleme yap.\n"
-        "\n"
-        "Soru: {query_str}\n"
-        "Cevap: "
+    chat_engine = index.as_chat_engine(
+        chat_mode="context",
+        verbose=True,
+        system_prompt=(
+            "Sen NexusDoc sisteminin çekirdeğinde çalışan, son derece profesyonel, net ve analitik bir doküman analiz uzmanısın. "
+            "Kullanıcının sorularına DAİMA ve SADECE Türkçe dilinde yanıt vermelisin. "
+            "Eğer sorunun cevabı bağlam bilgisinde yoksa, bunu dürüstçe Türkçe olarak belirt. "
+            "Kullanıcı sana 'teşekkür ederim', 'merhaba' gibi günlük iletişim ve nezaket ifadeleri kullandığında, ona profesyonel ve nazik bir şekilde 'Rica ederim', 'Size nasıl yardımcı olabilirim?' gibi kısa yanıtlar ver. Bu durumlarda asla gereksiz bilgi veya kod üretme."
+        )
     )
 
-    qa_template=PromptTemplate(qa_prompt_tmpl_str)
+    return chat_engine
 
-    query_engine=index.as_query_engine(
-        text_qa_template=qa_template,
-        similarity_top_k=3,
+def get_quiz_engine():
+    Settings.llm=Ollama(model="llama3", request_timeout=360.0)
+    Settings.embed_model=OllamaEmbedding(model_name="nomic-embed-text")
+
+    storage=get_storage_context()
+
+    index=VectorStoreIndex.from_vector_store(
+        vector_store=storage.vector_store,
+        storage_context=storage
     )
 
-    return query_engine
+    quiz_prompt = (
+        "Sen akademik bir sınav hazırlama motorusun. "
+        "Aşağıdaki bağlam bilgisini kullanarak, zor seviyede 3 adet çoktan seçmeli soru hazırla. "
+        "TÜM SORULAR, ŞIKLAR VE AÇIKLAMALAR KESİNLİKLE VE SADECE TÜRKÇE DİLİNDE OLMALIDIR. İngilizce kelime kullanma. "
+        "Çıktın SADECE ve SADECE aşağıdaki JSON formatında olmalıdır. JSON dışında tek bir kelime bile etme, açıklama yapma.\n"
+        "Format:\n"
+        "[\n"
+        "  {\n"
+        "    \"soru\": \"Soru metni\",\n"
+        "    \"secenekler\": [\"A şıkkı\", \"B şıkkı\", \"C şıkkı\", \"D şıkkı\", \"E şıkkı\"],\n"
+        "    \"dogru_cevap\": \"Doğru olan şıkkın tam metni\",\n"
+        "    \"aciklama\": \"Cevabın neden doğru olduğuna dair kısa açıklama\"\n"
+        "  }\n"
+        "]\n"
+    )
+
+    quiz_engine = index.as_query_engine(
+        similarity_top_k=5,
+        response_mode="compact",
+    )
+    
+    return quiz_engine , quiz_prompt
 
 if __name__ == "__main__":
     print("1. Sorgu Motoru Ayağa Kaldırılıyor (Bu işlem biraz zaman alabilir)...")
