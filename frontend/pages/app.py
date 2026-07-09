@@ -3,153 +3,261 @@ import requests
 
 API_URL = "http://127.0.0.1:8000"
 
-st.set_page_config(page_title="NexusDoc", page_icon="🛡️", layout="wide")
-st.title("🛡️ NexusDoc: Gelişmiş Analiz ve Eğitim Terminali")
+st.set_page_config(page_title="NexusDoc Terminal", page_icon="🛡️", layout="wide")
 
-# --- 1. SOHBET VE SINAV HAFIZASINI BAŞLATMA ---
+# ==========================================
+# DURUM YÖNETİMİ
+# ==========================================
+if "is_uploaded" not in st.session_state:
+    st.session_state.is_uploaded = False
+if "doc_name" not in st.session_state:
+    st.session_state.doc_name = ""
 if "mesajlar" not in st.session_state:
     st.session_state.mesajlar = []
-
 if "quiz_verisi" not in st.session_state:
     st.session_state.quiz_verisi = None
+if "flashcard_verisi" not in st.session_state:
+    st.session_state.flashcard_verisi = None
 
-# Sol Panel: Dosya Yükleme Kontrol Merkezi
-with st.sidebar:
-    st.header("📄 Doküman Yükle")
-    uploaded_file = st.file_uploader("Analiz edilecek PDF dosyasını seçin", type=["pdf"])
+# ==========================================
+# INTER FONT, SİYAH/YEŞİL TEMA VE BÜYÜK UPLOAD ALANI
+# ==========================================
+custom_css = """
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+
+    /* Koyu Arka Plan ve Metinler */
+    .stApp {
+        background-color: #09090B;
+        color: #F9FAFB;
+    }
+
+    /* Sekmeler (Odalar) */
+    .stTabs [data-baseweb="tab-list"] {
+        background-color: transparent;
+        gap: 32px;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .stTabs [data-baseweb="tab"] {
+        color: #9CA3AF;
+        font-weight: 500;
+        font-size: 1.05rem;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        border-radius: 0px;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #F9FAFB !important;
+        border-bottom: 2px solid #22C55E !important;
+        background-color: transparent !important;
+    }
+
+    /* Büyük Upload Alanı */
+    [data-testid="stFileUploader"] {
+        background-color: #111827;
+        border: 2px dashed rgba(34, 197, 94, 0.4);
+        border-radius: 16px;
+        padding: 4rem 2rem;
+        text-align: center;
+        transition: all 0.3s ease;
+    }
+    [data-testid="stFileUploader"]:hover {
+        border-color: #22C55E;
+        background-color: #18181B;
+    }
     
-    if uploaded_file is not None:
-        if st.button("Sisteme Yükle ve Vektörize Et"):
-            with st.spinner("Doküman işleniyor ve tüm hafıza temizleniyor..."):
-                files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
-                response = requests.post(f"{API_URL}/upload", files=files)
-                
-                if response.status_code == 200:
-                    st.success("Doküman başarıyla NexusDoc hafızasına eklendi.")
-                    # Yeni dosya gelince eski sohbeti ve eski sınavı sıfırla
-                    st.session_state.mesajlar = []
-                    st.session_state.quiz_verisi = None
-                else:
-                    st.error("Yükleme başarısız.")
+    /* Butonlar */
+    .stButton > button {
+        background-color: #18181B;
+        border: 1px solid rgba(34, 197, 94, 0.3);
+        color: #F9FAFB;
+        border-radius: 10px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+    }
+    .stButton > button:hover {
+        border-color: #22C55E;
+        color: #22C55E;
+        background-color: #111827;
+    }
 
-# --- 2. SEKMELİ MİMARİ ENJEKSİYONU ---
-tab_chat, tab_quiz, tab_flashcard = st.tabs([
-    "💬 Sohbet Odası", 
-    "📝 Akademik Sınav Odası", 
-    "🗂️ Bilgi Kartları (Yakında)"
-])
+    /* Sohbet Balonları */
+    [data-testid="stChatMessage"] {
+        background-color: transparent;
+        border: none;
+        padding: 1.5rem 0;
+    }
+    [data-testid="stChatMessage"][data-baseweb="flex"]:has(div:contains("user")) {
+        background-color: #18181B;
+        border-radius: 16px;
+        border: 1px solid rgba(255,255,255,0.05);
+        padding: 1.5rem;
+    }
+
+    /* Girdi Alanı */
+    [data-testid="stChatInput"] {
+        border-radius: 12px !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        background-color: #18181B !important;
+    }
+    [data-testid="stChatInput"]:focus-within {
+        border-color: #22C55E !important;
+    }
+
+    /* Kart Tasarımları (Flashcard & Quiz Sonuçları) */
+    .bilgi-karti {
+        background-color: #111827;
+        border-left: 4px solid #22C55E;
+        padding: 1.5rem;
+        border-radius: 8px;
+        margin-bottom: 1.2rem;
+        border-top: 1px solid rgba(255,255,255,0.05);
+        border-right: 1px solid rgba(255,255,255,0.05);
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+</style>
+"""
+st.markdown(custom_css, unsafe_allow_html=True)
+
 
 # ==========================================
-# SEBME 1: SOHBET ODASI
+# ANA EKRAN AKIŞI
 # ==========================================
-with tab_chat:
-    st.subheader("Doküman Asistanı")
+st.title("🛡️ NexusDoc Workspace")
+
+if not st.session_state.is_uploaded:
+    # --- YALNIZCA YÜKLEME EKRANI ---
+    st.markdown("<h3 style='text-align: center; color: #9CA3AF; font-weight: 400; margin-bottom: 3rem;'>Sistemi başlatmak için dokümanınızı yükleyin</h3>", unsafe_allow_html=True)
     
-    # Geçmiş mesajları ekrana dök
-    for mesaj in st.session_state.mesajlar:
-        with st.chat_message(mesaj["rol"]):
-            st.markdown(mesaj["icerik"])
-
-    # Kullanıcıdan yeni girdi al
-    soru = st.chat_input("Dokümanla ilgili sorunuzu buraya yazın...", key="chat_input_unique")
-
-    if soru:
-        st.session_state.mesajlar.append({"rol": "user", "icerik": soru})
-        with st.chat_message("user"):
-            st.markdown(soru)
-
-        with st.spinner("NexusDoc düşünüyor..."):
-            payload = {"soru": soru}
-            try:
-                response = requests.post(f"{API_URL}/ask", json=payload)
-                if response.status_code == 200:
-                    cevap = response.json().get("cevap", "")
-                    with st.chat_message("assistant"):
-                        st.markdown(cevap)
-                    st.session_state.mesajlar.append({"rol": "assistant", "icerik": cevap})
-                else:
-                    st.error("Sorgu işlenemedi.")
-            except requests.exceptions.ConnectionError:
-                st.error("FastAPI sunucusuna bağlanılamadı.")
-
-# ==========================================
-# SEKME 2: AKADEMİK SINAV ODASI
-# ==========================================
-with tab_quiz:
-    st.subheader("Otomatik Çoktan Seçmeli Sınav Modülü")
-    st.write("Yüklediğiniz dokümandaki verilere dayanarak zor seviyede 3 adet soru üretilir.")
-    
-    if st.button("🔄 Yeni Sınav Oluştur / Yenile"):
-        with st.spinner("Llama 3 dokümanı tarıyor ve soruları hazırlıyor..."):
-            try:
-                res = requests.get(f"{API_URL}/generate_quiz")
-                data = res.json()
-                
-                
-                if data.get("durum") in ["basarili", "başarılı"]:
-                    st.session_state.quiz_verisi = data.get("quiz") or data.get("quiz_verisi")
-                    st.success("Sınav başarıyla hazırlandı! Aşağıdan yanıtlayabilirsiniz.")
-                elif "mesaj" in data:
-                    st.error(f"Hata: {data.get('mesaj')}")
-                else:
-                    st.error(f"Beklenmeyen Sistem Durumu: {data}")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        uploaded_file = st.file_uploader("", type=["pdf"])
+        if uploaded_file is not None:
+            if st.button("Sisteme Yükle ve Analizi Başlat", use_container_width=True):
+                with st.spinner("Doküman işleniyor ve vektörize ediliyor..."):
+                    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
+                    try:
+                        response = requests.post(f"{API_URL}/upload", files=files)
+                        if response.status_code == 200 and response.json().get("durum") in ["basarili", "başarılı"]:
+                            st.session_state.is_uploaded = True
+                            st.session_state.doc_name = uploaded_file.name
+                            st.rerun()
+                        else:
+                            st.error("Yükleme başarısız.")
+                    except requests.exceptions.ConnectionError:
+                        st.error("Sunucu bağlantı hatası.")
+else:
+    # --- DOKÜMAN YÜKLENDİKTEN SONRAKİ ÇALIŞMA ALANI ---
+    col_baslik, col_buton = st.columns([4, 1])
+    with col_baslik:
+        st.success(f"📄 **{st.session_state.doc_name}** belleğe yüklendi ve analize hazır.")
+    with col_buton:
+        if st.button("Sıfırla / Yeni Belge"):
+            st.session_state.clear()
+            st.rerun()
             
-            
-            except Exception as e:
-                st.error(f"Sunucu bağlantı hatası: {str(e)}")
+    st.divider()
 
-    
-    if st.session_state.quiz_verisi:
-        st.write("---")
+    # ODA YAPISI (SEKMELER)
+    tab_chat, tab_quiz, tab_flashcard = st.tabs([
+        "💬 Sohbet Odası", 
+        "📝 Sınav Odası", 
+        "🗂️ Bilgi Kartları"
+    ])
+
+    # 1. ODA: SOHBET
+    with tab_chat:
+        st.subheader("Doküman Asistanı")
+        for mesaj in st.session_state.mesajlar:
+            with st.chat_message(mesaj["rol"]):
+                st.markdown(mesaj["icerik"])
+
+        soru = st.chat_input("Dokümanla ilgili sorgunuzu buraya yazın...")
+        if soru:
+            st.session_state.mesajlar.append({"rol": "user", "icerik": soru})
+            with st.chat_message("user"):
+                st.markdown(soru)
+                
+            with st.spinner("Motor yanıtlıyor..."):
+                try:
+                    response = requests.post(f"{API_URL}/ask", json={"soru": soru})
+                    if response.status_code == 200:
+                        cevap = response.json().get("cevap", "")
+                        st.session_state.mesajlar.append({"rol": "assistant", "icerik": cevap})
+                        st.rerun()
+                except Exception:
+                    st.error("Bağlantı hatası.")
+
+    # 2. ODA: SINAV MATRİSİ (EKSİK ŞIKLAR DÜZELTİLDİ)
+    with tab_quiz:
+        st.subheader("Otomatik Sınav Simülasyonu")
+        st.markdown("Dokümanın tamamı analiz edilerek 3 soruluk bir test oluşturulur.")
         
-        # Streamlit Rerun'larında şıkların sıfırlanmaması için formu kilitleyeceğiz
-        with st.form(key="quiz_form"):
-            user_answers = {}
-            
-            # JSON'dan gelen her bir soruyu döngüyle ekrana basıyoruz
-            for idx, q in enumerate(st.session_state.quiz_verisi):
-                st.markdown(f"**Soru {idx+1}:** {q['soru']}")
-                
-                # Kullanıcının seçeceği şıkkı kaydetmek için radio bileşeni
-                secim = st.radio(
-                    "Şıkkı Seçin:", 
-                    options=q['secenekler'], 
-                    key=f"q_{idx}"
-                )
-                user_answers[idx] = secim
-                st.write("") # Boşluk
-            
-            # Formun gönderilme butonu (Cevapları Kontrol Et)
-            submit_button = st.form_submit_button(label="🎯 Cevapları Kontrol Et")
-            
-            if submit_button:
-                st.write("### Sınav Sonuç Değerlendirmesi")
-                dogru_sayisi = 0
-                
+        if st.button("Sınav Motorunu Çalıştır", use_container_width=True):
+            with st.spinner("Sorular ve şıklar hazırlanıyor..."):
+                try:
+                    res = requests.get(f"{API_URL}/generate_quiz")
+                    if res.status_code == 200 and res.json().get("durum") == "basarili":
+                        st.session_state.quiz_verisi = res.json().get("quiz")
+                except Exception:
+                    st.error("Sınav üretilemedi.")
+                    
+        if st.session_state.quiz_verisi:
+            st.write("---")
+            with st.form(key="quiz_form"):
+                user_answers = {}
                 for idx, q in enumerate(st.session_state.quiz_verisi):
-                    user_ans = user_answers[idx]
-                    correct_ans = q['dogru_cevap']
-                    
-                    st.markdown(f"**Soru {idx+1} Değerlendirmesi:**")
-                    st.write(f"Senin Seçimin: `{user_ans}`")
-                    st.write(f"Doğru Cevap: `{correct_ans}`")
-                    
-                    if user_ans.strip() == correct_ans.strip():
-                        st.success("✅ DOĞRU!")
-                        dogru_sayisi += 1
-                    else:
-                        st.error("❌ YANLIŞ!")
-                    
-                    # Çözüm açıklamasını ekrana bas
-                    st.info(f"💡 **Çözüm Açıklaması:** {q['aciklama']}")
-                    st.write("---")
+                    st.markdown(f"**Soru {idx+1}: {q['soru']}**")
+                    # Şıklar (seçenekler) kullanıcının seçmesi için radio bileşeniyle ekranda!
+                    secim = st.radio("Cevabınız:", options=q['secenekler'], key=f"q_{idx}")
+                    user_answers[idx] = secim
+                    st.write("") 
                 
-                # Skoru ekrana bas
-                st.metric(label="Toplam Başarı Skoru", value=f"{dogru_sayisi} / 3")
+                submit_button = st.form_submit_button(label="🎯 Yanıtları Doğrula")
+                
+                if submit_button:
+                    st.markdown("### 📊 Analiz Raporu")
+                    dogru_sayisi = 0
+                    for idx, q in enumerate(st.session_state.quiz_verisi):
+                        user_ans = user_answers[idx]
+                        correct_ans = q['dogru_cevap']
+                        
+                        if user_ans.strip() == correct_ans.strip():
+                            st.success(f"✅ **Doğru!** Senin Seçimin: {user_ans}")
+                            dogru_sayisi += 1
+                        else:
+                            st.error(f"❌ **Yanlış!** Senin Seçimin: {user_ans} | Doğru Cevap: {correct_ans}")
+                        
+                        st.info(f"💡 **Açıklama:** {q['aciklama']}")
+                        st.write("---")
+                    
+                    st.metric(label="Toplam Başarı", value=f"{dogru_sayisi} / 3")
 
-# ==========================================
-# SEKME 3: BİLGI KARTLARI (YAKINDA)
-# ==========================================
-with tab_flashcard:
-    st.info("Bu modül bir sonraki geliştirme fazında (Faz 6 - Kısım B) aktif edilecektir.")
-    
+    # 3. ODA: BİLGİ KARTLARI (KART TASARIMI EKLENDİ)
+    with tab_flashcard:
+        st.subheader("Akıllı Bilgi Kartları")
+        st.markdown("Kritik terminolojiyi öğrenmek için kavram kartları oluşturun.")
+        
+        if st.button("Bilgi Kartlarını Çıkar", use_container_width=True):
+            with st.spinner("Kavramlar analiz ediliyor..."):
+                try:
+                    res = requests.get(f"{API_URL}/generate_flashcards")
+                    if res.status_code == 200 and res.json().get("durum") == "basarili":
+                        st.session_state.flashcard_verisi = res.json().get("kartlar")
+                except Exception:
+                    st.error("Kartlar üretilemedi.")
+
+        if st.session_state.flashcard_verisi:
+            st.write("---")
+            for kart in st.session_state.flashcard_verisi:
+                # Expander yerine profesyonel kart tasarımı (CSS ile)
+                st.markdown(f"""
+                <div class="bilgi-karti">
+                    <h4 style="margin: 0 0 10px 0; color: #F9FAFB;">{kart['terim']}</h4>
+                    <p style="margin: 0; color: #9CA3AF; line-height: 1.6;">{kart['tanim']}</p>
+                </div>
+                """, unsafe_allow_html=True)

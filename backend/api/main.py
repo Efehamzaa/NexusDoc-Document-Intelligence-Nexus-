@@ -1,21 +1,20 @@
 import os
 import sys
-import shutil
 import json
-
-from backend.core.query_engine import get_query_engine, get_quiz_engine
-from fastapi import FastAPI , HTTPException, UploadFile, File
-from pydantic import BaseModel
-
+import re
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from backend.core.query_engine import get_query_engine
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from pydantic import BaseModel
+from llama_index.readers.file import PyMuPDFReader
+
+from backend.core.query_engine import get_query_engine, get_quiz_engine, get_flashcard_engine
 from backend.core.indexer import build_index 
 
-app=FastAPI(title="NexusDoc API", description="RAG tabanlı doküman analiz motoru" )
+app = FastAPI(title="NexusDoc API", description="RAG tabanlı doküman analiz motoru")
 
-print(" RAG Motoru Yükleniyor. Bekleyin...")
+print("RAG Motoru Yükleniyor. Bekleyin...")
 engine = get_query_engine()
 print("Sistem Çevrimiçi.")
 
@@ -24,43 +23,32 @@ class SoruIstegi(BaseModel):
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
+    global engine
     try:
-        
-        data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'data'))
-        os.makedirs(data_dir, exist_ok=True) 
-        
-        file_path = os.path.join(data_dir, file.filename)
-        
-        
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        print(f"SİSTEM BİLDİRİMİ: {file.filename} diske kaydedildi. Vektörizasyon başlıyor...")
-        
-        
-        build_index(file_path)
-        
-        
-        global engine
+        temp_file_path = f"temp_{file.filename}"
+        with open(temp_file_path, "wb") as buffer:
+            buffer.write(await file.read())
+
+        loader = PyMuPDFReader()
+        documents = loader.load(file_path=temp_file_path)
+
+        build_index(documents)
+
         engine = get_query_engine()
         
-        print("SİSTEM BİLDİRİMİ: Hafıza güncellendi ve motor yeniden bağlandı.")
-        
-        return {
-            "durum": "başarılı", 
-            "mesaj": f"{file.filename} başarıyla yüklendi, parçalandı ve NexusDoc hafızasına eklendi."
-        }
-        
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+            
+        return {"durum": "basarili", "mesaj": "Doküman PyMuPDF ile derinlemesine analiz edildi ve indekslendi."}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Dosya yükleme veya indeksleme sırasında kritik hata: {str(e)}")
-    
+        return {"durum": "hata", "mesaj": f"Yükleme ve Vektörizasyon Hatası: {str(e)}"}
+
+
 @app.post("/ask")
 async def ask_question(istek: SoruIstegi):
     try:
-        # Gelen soruyu ChromaDB + Llama 3 motoruna at
         cevap = engine.chat(istek.soru)
-        
-        # Sonucu JSON formatında geri fırlat
         return {
             "soru": istek.soru,
             "cevap": str(cevap)
@@ -72,26 +60,43 @@ async def ask_question(istek: SoruIstegi):
 @app.get("/generate_quiz")
 def generate_quiz():
     try:
-        engine , prompt = get_quiz_engine()
-
-        ham_cevap = engine.query(prompt)
-        cevap_metni= str(ham_cevap).strip()
-
-        if cevap_metni.startswith("```json"):
-            cevap_metni = cevap_metni[7:]
-        if cevap_metni.endswith("```"):
-            cevap_metni = cevap_metni[:-3]
+        # Fonksiyondan artık sadece motor dönüyor, prompt template içinde gömülü
+        quiz_engine = get_quiz_engine()
         
-        cevap_metni = cevap_metni.strip()
-
-        quiz_verisi=json.loads(cevap_metni)
-
-        return {
-            "durum": "başarılı",
-            "quiz_verisi": quiz_verisi
-        }
-    except json.JSONDecodeError as e:
-        return {"durum": "hata", "mesaj": "Motor JSON formatına uymadı. Halüsinasyon engellendi.", "detay": str(e)}
+        # SİHİRLİ DOKUNUŞ: Veritabanına talimatı değil, aranacak bağlamı gönderiyoruz.
+        ham_cevap = quiz_engine.query("Dokümanın genel özeti, ana fikri, temel kavramlar ve kritik teoriler nelerdir?")
+        cevap_metni = str(ham_cevap).strip()
+        
+        match = re.search(r'\[.*\]', cevap_metni, re.DOTALL)
+        if match:
+            temiz_json_metni = match.group(0)
+        else:
+            return {"durum": "hata", "mesaj": "Motor geçerli bir JSON dizisi üretemedi."}
+        
+        quiz_verisi = json.loads(temiz_json_metni)
+        return {"durum": "basarili", "quiz": quiz_verisi}
+        
     except Exception as e:
-        return {"durum": "hata", "mesaj": "Quiz oluşturulurken kritik hata oluştu.", "detay": str(e)}
+        return {"durum": "hata", "mesaj": f"Beklenmeyen Sunucu Hatası: {str(e)}"}
     
+
+@app.get("/generate_flashcards")
+def generate_flashcards():
+    try:
+        flashcard_engine = get_flashcard_engine()
+        
+        # Veritabanında akademik terimleri bulması için anlamsal bir arama metni gönderiyoruz
+        ham_cevap = flashcard_engine.query("Dokümandaki önemli akademik terimler, tanımlar ve kurallar nelerdir?")
+        cevap_metni = str(ham_cevap).strip()
+        
+        match = re.search(r'\[.*\]', cevap_metni, re.DOTALL)
+        if match:
+            temiz_json_metni = match.group(0)
+        else:
+            return {"durum": "hata", "mesaj": "Motor geçerli bir JSON dizisi üretemedi."}
+        
+        kart_verisi = json.loads(temiz_json_metni)
+        return {"durum": "basarili", "kartlar": kart_verisi}
+        
+    except Exception as e:
+        return {"durum": "hata", "mesaj": f"Beklenmeyen Sunucu Hatası: {str(e)}"}
