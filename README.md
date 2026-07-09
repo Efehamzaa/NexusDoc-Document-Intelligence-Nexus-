@@ -28,6 +28,7 @@ pip install -r requirements.txt
 
     Arka plan API sunucusunu başlatın:
 uvicorn backend.api.main:app --reload
+    
     Yeni bir terminal açıp arayüzü başlatın:
 streamlit run frontend/app.py
 
